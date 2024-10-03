@@ -31,144 +31,123 @@ function removeStep(i) {
 function changeStep(i) {
     let selectElem = document.getElementById(`step-type-${i}`);
     let option = selectElem.options[selectElem.selectedIndex].value;
-    clearStepContent(i);
     switch (option) {
         case '-- Select Op --':
-        case '-- Control Flow --':
-        case '-- Persistence --':
             break;
-        case 'Match Document Selector':
-            appendMatchDocumentSelectorStep(i);
+        case 'Conditions':
+            createConditionsStep(i);
+            break;
+        case 'Match Selector':
+            createSelectorStep(i);
             break;
         case 'Match Text':
-            appendMatchTextStepContent(i);
-            break;
-        case 'Checkpoint':
-            appendCheckpointStepContent(i);
+            createTextStep(i);
             break;
         case 'Export':
-            appendExportStepContent(i);
+            createExportStep(i);
             break;
         default:
             console.error(`Unknown option: ${option}`)
     }
 }
 
-function clearStepContent(i) {
-    document.getElementById(`step-content-${i}`).innerHTML = '';
+function createConditionsStep(i) {
+    let content = document.getElementById(`step-content-${i}`);
+    content.innerHTML = `
+        <label for="step-conditions-${i}"> 
+        URL MATCHES 
+        <select>
+            <option>HOST</option>
+            <option>FULL REGEX</option>
+        </select>
+        </label>
+        <textarea id="step-conditions-${i}"></textarea>
+        <div><p>Control when the steps run.</p></div>`;
 }
 
-function appendMatchTextStepContent(i) {
+
+function createTextStep(i) {
     let content = document.getElementById(`step-content-${i}`);
-
-    let mode = document.createElement('select');
-    mode.innerHTML = `
-        <option>EXTRACT</option>
-        <option>BEFORE</option>
-        <option>AFTER</option>
-    `;
-    content.appendChild(mode);
-
-    appendTextOperationTypeStepContent(i);
-    appendTextareaStepContent(i);
-
-    let flags = document.createElement('div');
-    flags.innerHTML = `
+    content.innerHTML = `
+        EXTRACT TEXT
+        <select>
+            <option>LITERAL</option>
+            <option>ATTRIBUTE</option>
+            <option>FROM PARTIAL REGEXP</option>
+        </select>
+        <textarea></textarea>
+        <div>
+            <p>
+            <input id="step-flags-i-${i}" type="checkbox">
+            <label for="step-flags-i-${i}">Ignore Case</label>
+            </p>
+        </div>
+        <div>
         <p>
-        <input id="step-flags-i-${i}" type="checkbox">
-        <label for="step-flags-i-${i}">Ignore Case</label>
-        </p>`;
-    content.appendChild(flags);
-
-    let docElem = document.createElement('p');
-    let doc = document.createElement('a');
-    doc.target = '_blank';
-    doc.href = 'https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_expressions';
-    doc.innerText = 'Using regular expressions';
-    docElem.appendChild(doc);
-    content.appendChild(docElem);
-}
-
-function appendTextOperationTypeStepContent(i) {
-    let opElem = document.createElement('select');
-    opElem.innerHTML = `
-        <option>=</option>
-        <option>REGEXP</option>
-    `;
-    let content = document.getElementById(`step-content-${i}`);
-    content.appendChild(opElem);
-}
-
-function appendTextareaStepContent(i) {
-    let textElem = document.createElement('textarea');
-    let content = document.getElementById(`step-content-${i}`);
-    content.appendChild(textElem);
-}
-
-function appendMatchDocumentSelectorStep(i) {
-    let content = document.getElementById(`step-content-${i}`);
-
-    let mode = document.createElement('select');
-    mode.innerHTML = `
-        <option>CONTENTS</option>
-        <option>NODE</option>
-        <option>BEFORE</option>
-        <option>AFTER</option>
-    `;
-    content.appendChild(mode);
-
-    appendTextareaStepContent(i);
-
-    let docElem = document.createElement('div');
-    docElem.innerHTML = `
-        <p>
-        <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_selectors">Using CSS Selectors</a>
-        <br>
-        <a target="_blank" href="https://github.com/wenooij/nuggit-chrome-extension">Using the mode option</a>
-        </p>`;
-    content.appendChild(docElem);
-}
-
-function appendCheckpointStepContent(i) {
-    let content = document.getElementById(`step-content-${i}`);
-
-    let mode = document.createElement('select');
-    mode.innerHTML = `
-        <option>Save</option>
-        <option>Restore</option>    
-    `;
-    content.appendChild(mode);
-
-    let name = document.createElement('input');
-    name.placeholder = 'Enter checkpoint name...';
-    name.id = `checkpoint-name-${i}`;
-    content.appendChild(name);
-
-    let doc = document.createElement('div');
-    doc.innerHTML = `<p>Checkpoints can be saved and recalled later.</p>`;
-    content.appendChild(doc);
-}
-
-function appendExportStepContent(i) {
-    let content = document.getElementById(`step-content-${i}`);
-
-    let flags = document.createElement('div');
-    flags.innerHTML = `
-        <p>
-        <input id="step-export-nullable-${i}" type="checkbox">
-        <label for="step-export-nullable-${i}">Allow Null?</label>
+            Extract text from the page.
+            <br>
+            <br>
+            <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_expressions">Using REGEXP</a>
         </p>
-    `;
-    content.appendChild(flags);
+        </div>`;
+}
 
-    let name = document.createElement('input');
-    name.placeholder = 'Enter exported name...';
-    name.id = `export-name-${i}`;
-    content.appendChild(name);
+function createSelectorStep(i) {
+    let content = document.getElementById(`step-content-${i}`);
+    content.innerHTML = `
+        SELECT DESCENDENTS OF 
+        <textarea></textarea>
+        <div>
+        <p>
+            Match HTML elements on the page.
+            <br>
+            <br>
+            <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_selectors">Using CSS Selectors</a>
+            <br>
+            <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/CSS/Attribute_selectors">Using Attribute Selectors</a>
+            <br>
+            <a target="_blank" href="https://github.com/wenooij/nuggit-chrome-extension">Using the mode option</a>
+        </p>
+        </div>`;
+}
 
-    let doc = document.createElement('div');
-    doc.innerHTML = `<p>Export the current selection as a structured data.</p>`;
-    content.appendChild(doc);
+function createExportStep(i) {
+    let content = document.getElementById(`step-content-${i}`);
+    content.innerHTML = `
+        <div>
+        <p>
+            <input id="step-export-nullable-${i}" type="checkbox">
+            <label for="step-export-nullable-${i}">Allow Null?</label>
+            <input id="step-export-provenance-${i}" type="checkbox" checked>
+            <label for="step-export-provenance-${i}">Add Provenance?</label>
+        </p>
+        </div>
+        <div>
+            <label for="export-collection-${i}">Collection</label> <input id="export-collection-${i}" placeholder="Enter collection name..."><br>
+            <label for="export-name-${i}">Name</label> <input id="export-name-${i}" placeholder="Enter exported name...">
+        </div>
+        <div>
+        <p>
+            Export the text selected up to this point as data.
+            <br>
+            <br>
+            <a target="_blank" href="https://github.com/wenooij/nuggit-chrome-extension">Using Export</a>
+        </p>
+        </div>`;
+}
+
+function moveUp(i) {
+    let step = document.getElementById(`step-${i}`);
+    let prevStep = step.previousSibling;
+    if (prevStep == null) { return; }
+    prevStep.parentElement.insertBefore(step, prevStep);
+}
+
+function moveDown(i) {
+    let step = document.getElementById(`step-${i}`);
+    let nextStep = step.nextSibling;
+    if (nextStep == null) { return; }
+    step.parentElement.insertBefore(nextStep, step);
 }
 
 function addStep() {
@@ -180,12 +159,9 @@ function addStep() {
     newStep.innerHTML = `
         <select name="step-type-${stepID}" id="step-type-${stepID}">
         <option>-- Select Op --</option>
-        <option>-- Matchers --</option>
-        <option>Match Document Selector</option>
+        <option>Conditions</option>
+        <option>Match Selector</option>
         <option>Match Text</option>
-        <option>-- Control Flow --</option>
-        <option>Checkpoint</option>
-        <option>-- Persistence --</option>
         <option>Export</option>
         </select>
         <button id="remove-step-${stepID}">-</button>
@@ -201,6 +177,12 @@ function addStep() {
     let id = stepID;
     document.getElementById(`remove-step-${stepID}`).addEventListener('click', function (event) {
         removeStep(id);
+    });
+    document.getElementById(`up-step-${stepID}`).addEventListener('click', function (event) {
+        moveUp(id);
+    });
+    document.getElementById(`down-step-${stepID}`).addEventListener('click', function (event) {
+        moveDown(id);
     });
 }
 
