@@ -1,16 +1,16 @@
 {
     "manifest_version": 3,
     "name": "Nuggit",
-    "version": "0.1.0",
+    "version": "1.0",
     "description": "Extracts data from webpages as you browse them",
-    "permissions": ["activeTab"],
     "action": {
       "default_popup": "popup.html",
       "default_icon": "icon.png"
     },
     "content_scripts": [
       {
-        "matches": ["<all_urls>"],
+        "matches": ["*://*/*"],
+        "run_at": "document_idle",
         "js": ["content.js"]
       }
     ]
