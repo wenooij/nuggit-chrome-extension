@@ -67,10 +67,11 @@ async function execExchange(trigger, exchanges, steps, stepResults) {
     });
 
     if (!response.ok) {
-      throw new Error(`Nuggit exchange failed: ${response.status}`);
+      const result = await response.json();
+      throw new Error(`Nuggit exchange failed: ${response.status} ${result.reason}`);
     }
   } catch (error) {
-    console.error(`Exhcnage error: ${error.message}`);
+    console.error(`Exchange error: ${error.message}`);
   }
 }
 
