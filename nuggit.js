@@ -22,17 +22,15 @@ async function testBackendConnection() {
 }
 
 async function fetchTrigger() {
-  const response = await fetch(`${await getBackendAddress()}/api/trigger`, {
+  const response = await fetch(`${await getBackendAddress()}/api/triggers`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      'trigger': {
-        'implicit': true,
-        'url': document.location.href,
-        'timestamp': new Date(),
-      },
+      implicit: true,
+      url: document.location.href,
+      timestamp: new Date(),
     }),
   });
 
@@ -44,25 +42,74 @@ async function fetchTrigger() {
   return result;
 }
 
+function convertResult(action, result) {
+  switch (action.type) {
+    case 'int64':
+    case 'uint64':
+      if (Array.isArray(result)) {
+        return result.map(e => parseInt(e, 10));
+      }
+      return parseInt(result, 10);
+
+    case 'float64':
+      if (Array.isArray(result)) {
+        return result.map(e => parseFloat(e));
+      }
+      return parseFloat(result);
+
+    case 'bytes':
+    case '':
+    case undefined:
+      if (result instanceof Element || result instanceof HTMLElement) {
+        if (result.nodeType == Node.TEXT_NODE) {
+          return result.textContent;
+        } else {
+          return result.outerHTML || String(result);
+        }
+      } else if (result instanceof NodeList) {
+        return Array.from(result).map(node => {
+          if (node.nodeType == Node.TEXT_NODE) {
+            return node.textContent;
+          } else {
+            return node.outerHTML || String(node);
+          }
+        });
+      } else if (typeof result === 'string') {
+        return result;
+      } else {
+        return JSON.stringify(result);
+      }
+
+    default: // Unsupported types default here.
+      throw new Error(`Unsupported action type: ${action.type}`);
+  }
+}
+
 async function execExchange(trigger, exchanges, steps, stepResults) {
   var results = [];
   for (i in stepResults) {
     if (exchanges.has(+i)) {
       results.push({
-        pipe: steps[i].spec.pipe,
-        result: stepResults[i],
+        pipe: `${steps[i].action.name}@${steps[i].action.digest}`,
+        result: convertResult(steps[i].action, stepResults[i]),
       });
     }
   }
 
   try {
-    const response = await fetch(`${await getBackendAddress()}/api/triggers/${trigger.id}/exchange`, {
+    const response = await fetch(`${await getBackendAddress()}/api/triggers/exchange`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        'results': results,
+        trigger: {
+          plan: trigger.id,
+          implicit: true,
+          url: document.location.href,
+          timestamp: new Date(),
+        },
+        results: results,
       }),
     });
 
@@ -80,20 +127,26 @@ async function execInnerText(input) {
     return Array.from(input).map((node) => node.innerText);
   }
 
-  return null;
+  return input.innerText || null;
 }
 
 async function execStep(step, input) {
-  switch (step.action) {
-    case 'document':
+  console.log(step, input);
+
+  switch (step.action.action) {
+    case 'documentElement':
       return document.documentElement;
 
-    case 'selector':
+    case 'querySelector':
       // TODO: Do select on input.
-      return document.querySelectorAll(step.spec.selector);
+      return document.querySelector(step.action.selector);
+
+    case 'querySelectorAll':
+      // TODO: Do select on input.
+      return document.querySelectorAll(step.action.selector);
 
     case 'field':
-      switch (step.spec.field) {
+      switch (step.action.field) {
         case 'innerHTML':
           return input.innerHTML;
 
@@ -104,13 +157,13 @@ async function execStep(step, input) {
           return execInnerText(input);
 
         default:
-          console.error(`Unsupported field: ${step.spec.field}`);
+          console.error(`Unsupported field: ${step.action.field}`);
           break;
       }
       break;
 
     default:
-      console.error(`Unsupported action: ${step.action}`);
+      console.error(`Unsupported action: ${step.action.action}`);
       break;
   }
 }
@@ -156,7 +209,7 @@ function isEmpty(data) {
   return Object.keys(data).length === 0 && data.constructor === Object;
 }
 
-async function trigger() {
+async function openTrigger() {
   if (triggerResponse) {
     execTrigger(triggerResponse);
     return;
@@ -190,7 +243,7 @@ function registerObserver() {
   var cooldown;
   const callback = () => {
     clearTimeout(cooldown);
-    cooldown = setTimeout(trigger, 100);
+    cooldown = setTimeout(openTrigger, 100);
   };
   const o = new MutationObserver(callback);
   o.observe(document.body, { childList: true, subtree: true });
@@ -199,6 +252,6 @@ function registerObserver() {
 (async function init() {
   const connected = await testBackendConnection();
   if (connected) {
-    trigger();
+    openTrigger();
   }
 })();
