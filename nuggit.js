@@ -43,18 +43,21 @@ async function fetchTrigger() {
 }
 
 function convertResult(action, result) {
+  if (result === undefined) {
+    return null;
+  }
+  if (Array.isArray(result)) {
+    return result.map((e) => convertResult(action, e));
+  }
+  if (result instanceof NodeList) {
+    return Array.from(result).map((node) => convertResult(action, node));
+  }
   switch (action.type) {
     case 'int64':
     case 'uint64':
-      if (Array.isArray(result)) {
-        return result.map(e => parseInt(e, 10));
-      }
       return parseInt(result, 10);
 
     case 'float64':
-      if (Array.isArray(result)) {
-        return result.map(e => parseFloat(e));
-      }
       return parseFloat(result);
 
     case 'bytes':
@@ -66,14 +69,6 @@ function convertResult(action, result) {
         } else {
           return result.outerHTML || String(result);
         }
-      } else if (result instanceof NodeList) {
-        return Array.from(result).map(node => {
-          if (node.nodeType == Node.TEXT_NODE) {
-            return node.textContent;
-          } else {
-            return node.outerHTML || String(node);
-          }
-        });
       } else if (typeof result === 'string') {
         return result;
       } else {
@@ -122,45 +117,88 @@ async function execExchange(trigger, exchanges, steps, stepResults) {
   }
 }
 
-async function execInnerText(input) {
-  if (input instanceof NodeList) {
-    return Array.from(input).map((node) => node.innerText);
+function executeQuerySelector(input, selector, all) {
+  if (!input) {
+    input = document.documentElement;
   }
+  if (input instanceof HTMLElement) {
+    if (all) {
+      return input.querySelectorAll(selector);
+    }
+    return input.querySelector(selector);
+  }
+  if (input instanceof NodeList) {
+    return Array.from(input).map((node) => executeQuerySelector(node, selector, all));
+  }
+  throw new Error(`input for query selector is not a Node or NodeList (${selector})`);
+}
 
-  return input.innerText || null;
+async function execHTMLElement(input, field) {
+  if (input instanceof HTMLElement) {
+    return input[field];
+  }
+  if (input instanceof NodeList) {
+    return Array.from(input).map((node) => node[field]);
+  }
+  return input[field];
+}
+
+async function execRegexp(re, input) {
+  if (input === undefined) {
+    return;
+  }
+  if (input instanceof HTMLElement) {
+    return execRegexp(re, input.outerHTML);
+  }
+  if (typeof input === 'string') {
+    const matches = [];
+    let match;
+    while ((match = re.exec(input)) !== null) {
+      if (match[1]) { // Use first group if available.
+        matches.push(match[1])
+      } else { // Use full match.
+        matches.push(match[0]);
+      }
+    }
+    return matches;
+  }
+  if (Array.isArray(input)) {
+    return input.map(async (e) => await execRegexp(re, e));
+  }
 }
 
 async function execStep(step, input) {
-  console.log(step, input);
-
   switch (step.action.action) {
-    case 'documentElement':
+    case 'documentElement':  // https://developer.mozilla.org/en-US/docs/Web/API/Document/documentElement
       return document.documentElement;
 
-    case 'querySelector':
+    case 'querySelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
       // TODO: Do select on input.
-      return document.querySelector(step.action.selector);
+      return await executeQuerySelector(input, step.action.selector, false);
 
-    case 'querySelectorAll':
+    case 'querySelectorAll':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
       // TODO: Do select on input.
-      return document.querySelectorAll(step.action.selector);
+      return await executeQuerySelector(input, step.action.selector, true);
 
     case 'field':
       switch (step.action.field) {
-        case 'innerHTML':
-          return input.innerHTML;
+        case 'innerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML
+          return await execHTMLElement(input, 'innerHTML');
 
-        case 'outerHTML':
-          return input.outerHTML;
+        case 'outerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/outerHTML
+          return await execHTMLElement(input, 'outerHTML');
 
-        case 'innerText':
-          return execInnerText(input);
+        case 'innerText':  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/innerText
+          return await execHTMLElement(input, 'innerText');
 
         default:
           console.error(`Unsupported field: ${step.action.field}`);
           break;
       }
       break;
+
+    case 'regexp':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp
+      return await execRegexp(new RegExp(step.action.pattern, 'g'), input);
 
     default:
       console.error(`Unsupported action: ${step.action.action}`);
