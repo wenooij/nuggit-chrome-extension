@@ -69,11 +69,17 @@ function convertResult(action, result) {
         } else {
           return result.outerHTML || String(result);
         }
-      } else if (typeof result === 'string') {
-        return result;
-      } else {
-        return JSON.stringify(result);
       }
+      if (result instanceof Attr) {
+        return result.value;
+      }
+      if (result instanceof NamedNodeMap) {
+        return Array.from(result).map((e) => e.value);
+      }
+      if (typeof result === 'string') {
+        return result;
+      }
+      return JSON.stringify(result);
 
     default: // Unsupported types default here.
       throw new Error(`Unsupported action type: ${action.type}`);
@@ -86,7 +92,7 @@ async function execExchange(trigger, exchanges, steps, stepResults) {
     if (exchanges.has(+i)) {
       results.push({
         pipe: `${steps[i].action.name}@${steps[i].action.digest}`,
-        result: convertResult(steps[i].action, stepResults[i]),
+        result: stepResults[i],
       });
     }
   }
@@ -167,38 +173,75 @@ async function execRegexp(re, input) {
   }
 }
 
+async function execAttributes(input, name) {
+  if (!input) {
+    input = document.documentElement;
+  }
+  const getAttr = (node) => {
+    const attrs = node.attributes;
+    if (name) {
+      return attrs[name];
+    }
+    return attrs;
+  };
+  if (input instanceof HTMLElement) {
+    return getAttr(input);
+  }
+  if (input instanceof NodeList) {
+    return Array.from(input).map((node) => getAttr(node));
+  }
+  if (Array.isArray(input)) {
+    return input.map((node) => getAttr(node));
+  }
+}
+
+function execSplit(input, separator) {
+  if (typeof input == 'string') {
+    return input.split(separator);
+  }
+  if (Array.isArray(input)) {
+    return input.map((e) => execSplit(e, separator));
+  }
+}
+
+function execGet(input, prop) {
+  if (Array.isArray(input)) {
+    return input.map((e) => e[prop]);
+  }
+  return input[prop];
+}
+
 async function execStep(step, input) {
   switch (step.action.action) {
     case 'documentElement':  // https://developer.mozilla.org/en-US/docs/Web/API/Document/documentElement
       return document.documentElement;
 
     case 'querySelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
-      // TODO: Do select on input.
       return await executeQuerySelector(input, step.action.selector, false);
 
     case 'querySelectorAll':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
-      // TODO: Do select on input.
       return await executeQuerySelector(input, step.action.selector, true);
 
-    case 'field':
-      switch (step.action.field) {
-        case 'innerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML
-          return await execHTMLElement(input, 'innerHTML');
+    case 'innerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML
+      return await execHTMLElement(input, 'innerHTML');
 
-        case 'outerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/outerHTML
-          return await execHTMLElement(input, 'outerHTML');
+    case 'outerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/outerHTML
+      return await execHTMLElement(input, 'outerHTML');
 
-        case 'innerText':  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/innerText
-          return await execHTMLElement(input, 'innerText');
-
-        default:
-          console.error(`Unsupported field: ${step.action.field}`);
-          break;
-      }
-      break;
+    case 'innerText':  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/innerText
+      return await execHTMLElement(input, 'innerText');
 
     case 'regexp':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp
       return await execRegexp(new RegExp(step.action.pattern, 'g'), input);
+
+    case 'attributes':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/attributes
+      return await execAttributes(input, step.action.name);
+
+    case 'split':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/split
+      return execSplit(input, step.action.separator);
+
+    case 'get':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/get#prop
+      return execGet(input, step.action.prop);
 
     default:
       console.error(`Unsupported action: ${step.action.action}`);
@@ -222,16 +265,17 @@ async function execTrigger(triggerResponse) {
 
     if (roots.has(+i)) { // Root.
       const result = await execStep(step, null);
-      console.log('---> Root', i, step, '=>', result);
+      console.log('---> Root', (+i)+1, step, '=>', result);
       stepResults[i] = result;
     } else if (exchanges.has(+i)) { // Exchange.
-      const input = stepResults[step.input - 1];
-      console.log('<--- Exchange', i, step, '=>', input);
+      // TODO: Use Point here when available.
+      const input = convertResult({}, stepResults[step.input - 1]);
+      console.log('<--- Exchange', (+i)+1, step, '=>', input);
       stepResults[i] = input;
     } else { // Regular step.
       const input = stepResults[step.input - 1];
       const result = await execStep(step, input);
-      console.log('.... Step', i, step, '=>', result);
+      console.log('.... Step', (+i)+1, step, '=>', result);
       stepResults[i] = result;
     }
   }
