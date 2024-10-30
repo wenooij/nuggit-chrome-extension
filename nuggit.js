@@ -1,3 +1,5 @@
+'use strict';
+
 const defaultAddress = 'http://localhost:9402';
 
 async function getBackendAddress() {
@@ -86,9 +88,193 @@ function convertResult(action, result) {
   }
 }
 
+class BaseAction {
+  constructor(config) {
+    if (!config || typeof config !== 'object' || !config.action) {
+      throw new Error('invalid action config: \'action\' property is required')
+    }
+    this.config = config;
+  }
+
+  execute() {
+    throw new Error('invalid execute call on base class')
+  }
+}
+
+class PropAction extends BaseAction {
+  constructor(config, prop) {
+    super(config);
+    this.prop = prop;
+  }
+
+  execute(input) {
+    if (Array.isArray(input)) {
+      return input.map((item) => item[this.prop]);
+    }
+    if (typeof input === 'object' && input !== null) {
+      return input[this.prop];
+    }
+    throw new Error('invalid input in prop action');
+  }
+}
+
+class DocumentElementAction extends BaseAction {
+  execute() {
+    return document.documentElement;
+  }
+}
+
+class QuerySelectorAction extends BaseAction {
+  execute(input) {
+    if (!input) {
+      input = document.documentElement;
+    }
+    const { selector } = this.config;
+    if (input instanceof HTMLElement) {
+      return input.querySelector(selector);
+    }
+    if (input instanceof NodeList) {
+      return Array.from(input).map((node) => this.execute(node));
+    }
+    if (Array.isArray(input)) {
+      return input.map((node) => this.execute(node));
+    }
+    throw new Error(`invalid input in query selector (${selector})`);
+  }
+}
+
+class QuerySelectorAllAction extends BaseAction {
+  execute(input) {
+    if (!input) {
+      input = document.documentElement;
+    }
+    const { selector } = this.config;
+    if (input instanceof HTMLElement) {
+      return Array.from(input.querySelectorAll(selector));
+    }
+    if (input instanceof NodeList) {
+      return Array.from(input).map((node) => this.execute(node));
+    }
+    if (Array.isArray(input)) {
+      return input.map((node) => this.execute(node));
+    }
+    throw new Error(`invalid input in query selector (all) (${selector})`);
+  }
+}
+
+class RegexpAction extends BaseAction {
+  execute(input) {
+    const { pattern } = self.config;
+    const re = new RegExp(pattern, 'g');
+    const matches = (input) => {
+      const matches = [];
+      let match;
+      while ((match = re.exec(input)) !== null) {
+        if (match[1]) { // Use first group if available.
+          matches.push(match[1])
+        } else { // Use full match.
+          matches.push(match[0]);
+        }
+      }
+      return matches;
+    };
+    if (input instanceof HTMLElement) {
+      return this.execute(re, input.outerHTML);
+    }
+    if (typeof input === 'string') {
+      return matches(input);
+    }
+    if (Array.isArray(input)) {
+      return input.map(async (e) => matches(e));
+    }
+    throw new Error('invalid input in regexp action');
+  }
+}
+
+class AttributesAction extends PropAction {
+  constructor(config) {
+    super(config, 'attributes');
+  }
+
+  execute(input) {
+    const { name } = this.config;
+    const getAttr = (attrs) => {
+      if (name) {
+        return attrs[name];
+      }
+      return attrs;
+    }
+    if (Array.isArray(input)) {
+      return input.map((e) => getAttr(super.execute(e)));
+    }
+    if (input instanceof NodeList) {
+      return Array.from(super.execute(input)).map((e) => getAttr(super.execute(e)));
+    }
+    if (input instanceof HTMLElement) {
+      return getAttr(super.execute(input));
+    }
+    throw new Error('invalid input in attributes action');
+  }
+}
+
+class SplitAction extends BaseAction {
+  execute(input) {
+    const { separator } = this.config;
+    if (typeof input == 'string') {
+      return input.split(separator);
+    }
+    if (Array.isArray(input)) {
+      return input.map((e) => this.execute(e));
+    }
+    throw new Error('invalid input in split action');
+  }
+}
+
+class GetAction extends BaseAction {
+  execute(input) {
+    const { prop } = this.config;
+    if (Array.isArray(input)) {
+      return input.map((item) => item[prop]);
+    }
+    if (typeof input === 'object' && input !== null) {
+      return input[prop];
+    }
+    throw new Error('invalid input in get action');
+  }
+}
+
+class Actions {
+  static create(config) {
+    switch (config.action) {
+      case 'documentElement':  // https://developer.mozilla.org/en-US/docs/Web/API/Document/documentElement
+        return new DocumentElementAction(config);
+      case 'querySelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
+        return new QuerySelectorAction(config);
+      case 'querySelectorAll':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
+        return new QuerySelectorAllAction(config);
+      case 'innerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML
+        return new PropAction(config, 'innerHTML');
+      case 'outerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/outerHTML
+        return new PropAction(config, 'outerHTML');
+      case 'innerText':  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/innerText
+        return new PropAction(config, 'innerText');
+      case 'regexp':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp
+        return new RegexpAction(config);
+      case 'attributes':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/attributes
+        return new AttributesAction(config);
+      case 'split':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/split
+        return new SplitAction(config);
+      case 'get':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/get#prop
+        return new GetAction(config);
+      default:
+        throw new Error(`Unsupported action: ${config.action}`);
+    }
+  }
+}
+
 async function execExchange(trigger, exchanges, steps, stepResults) {
   var results = [];
-  for (i in stepResults) {
+  for (const i in stepResults) {
     if (exchanges.has(+i)) {
       results.push({
         pipe: `${steps[i].action.name}@${steps[i].action.digest}`,
@@ -123,134 +309,12 @@ async function execExchange(trigger, exchanges, steps, stepResults) {
   }
 }
 
-function executeQuerySelector(input, selector, all) {
-  if (!input) {
-    input = document.documentElement;
-  }
-  if (input instanceof HTMLElement) {
-    if (all) {
-      return input.querySelectorAll(selector);
-    }
-    return input.querySelector(selector);
-  }
-  if (input instanceof NodeList) {
-    return Array.from(input).map((node) => executeQuerySelector(node, selector, all));
-  }
-  throw new Error(`input for query selector is not a Node or NodeList (${selector})`);
-}
-
-async function execHTMLElement(input, field) {
-  if (input instanceof HTMLElement) {
-    return input[field];
-  }
-  if (input instanceof NodeList) {
-    return Array.from(input).map((node) => node[field]);
-  }
-  return input[field];
-}
-
-async function execRegexp(re, input) {
-  if (input === undefined) {
-    return;
-  }
-  if (input instanceof HTMLElement) {
-    return execRegexp(re, input.outerHTML);
-  }
-  if (typeof input === 'string') {
-    const matches = [];
-    let match;
-    while ((match = re.exec(input)) !== null) {
-      if (match[1]) { // Use first group if available.
-        matches.push(match[1])
-      } else { // Use full match.
-        matches.push(match[0]);
-      }
-    }
-    return matches;
-  }
-  if (Array.isArray(input)) {
-    return input.map(async (e) => await execRegexp(re, e));
-  }
-}
-
-async function execAttributes(input, name) {
-  if (!input) {
-    input = document.documentElement;
-  }
-  const getAttr = (node) => {
-    const attrs = node.attributes;
-    if (name) {
-      return attrs[name];
-    }
-    return attrs;
-  };
-  if (input instanceof HTMLElement) {
-    return getAttr(input);
-  }
-  if (input instanceof NodeList) {
-    return Array.from(input).map((node) => getAttr(node));
-  }
-  if (Array.isArray(input)) {
-    return input.map((node) => getAttr(node));
-  }
-}
-
-function execSplit(input, separator) {
-  if (typeof input == 'string') {
-    return input.split(separator);
-  }
-  if (Array.isArray(input)) {
-    return input.map((e) => execSplit(e, separator));
-  }
-}
-
-function execGet(input, prop) {
-  if (Array.isArray(input)) {
-    return input.map((e) => e[prop]);
-  }
-  return input[prop];
-}
-
-async function execStep(step, input) {
-  switch (step.action.action) {
-    case 'documentElement':  // https://developer.mozilla.org/en-US/docs/Web/API/Document/documentElement
-      return document.documentElement;
-
-    case 'querySelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
-      return await executeQuerySelector(input, step.action.selector, false);
-
-    case 'querySelectorAll':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
-      return await executeQuerySelector(input, step.action.selector, true);
-
-    case 'innerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML
-      return await execHTMLElement(input, 'innerHTML');
-
-    case 'outerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/outerHTML
-      return await execHTMLElement(input, 'outerHTML');
-
-    case 'innerText':  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/innerText
-      return await execHTMLElement(input, 'innerText');
-
-    case 'regexp':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp
-      return await execRegexp(new RegExp(step.action.pattern, 'g'), input);
-
-    case 'attributes':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/attributes
-      return await execAttributes(input, step.action.name);
-
-    case 'split':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/split
-      return execSplit(input, step.action.separator);
-
-    case 'get':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/get#prop
-      return execGet(input, step.action.prop);
-
-    default:
-      console.error(`Unsupported action: ${step.action.action}`);
-      break;
-  }
+function execStep(step, input) {
+  const action = Actions.create(step.action);
+  return action.execute(input);
 }
 
 async function execTrigger(triggerResponse) {
-
   const trigger = triggerResponse.trigger;
   const steps = triggerResponse.steps;
   const roots = triggerResponse.roots;
@@ -265,17 +329,17 @@ async function execTrigger(triggerResponse) {
 
     if (roots.has(+i)) { // Root.
       const result = await execStep(step, null);
-      console.log('---> Root', (+i)+1, step, '=>', result);
+      console.log('---> Root', (+i) + 1, step, '=>', result);
       stepResults[i] = result;
     } else if (exchanges.has(+i)) { // Exchange.
       // TODO: Use Point here when available.
       const input = convertResult({}, stepResults[step.input - 1]);
-      console.log('<--- Exchange', (+i)+1, step, '=>', input);
+      console.log('<--- Exchange', (+i) + 1, step, '=>', input);
       stepResults[i] = input;
     } else { // Regular step.
       const input = stepResults[step.input - 1];
       const result = await execStep(step, input);
-      console.log('.... Step', (+i)+1, step, '=>', result);
+      console.log('.... Step', (+i) + 1, step, '=>', result);
       stepResults[i] = result;
     }
   }
