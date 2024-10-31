@@ -99,6 +99,10 @@ class BaseAction {
   execute() {
     throw new Error('invalid execute call on base class')
   }
+
+  log_invalid_type(input) {
+    console.error('invalid input type in action', input?.constructor ? input.constructor : input);
+  }
 }
 
 class PropAction extends BaseAction {
@@ -114,7 +118,7 @@ class PropAction extends BaseAction {
     if (typeof input === 'object' && input !== null) {
       return input[this.prop];
     }
-    throw new Error('invalid input in prop action');
+    super.log_invalid_type(input);
   }
 }
 
@@ -124,7 +128,34 @@ class DocumentElementAction extends BaseAction {
   }
 }
 
-class QuerySelectorAction extends BaseAction {
+class FilterSelectorAction extends BaseAction {
+  execute(input) {
+    if (!input) {
+      return [];
+    }
+    const { selector } = this.config;
+    if (input instanceof HTMLElement) {
+      if (input.matches(selector)) {
+        return input;
+      }
+      return null;
+    }
+    if (input instanceof NodeList) {
+      return this.execute(Array.from(input));
+    }
+    if (Array.isArray(input)) {
+      return input.filter((e) => this.execute(e) != null)
+    }
+    super.log_invalid_type(input);
+  }
+}
+
+class BaseQuerySelectorAction extends BaseAction {
+  constructor(config, all) {
+    super(config);
+    this.all = all;
+  }
+
   execute(input) {
     if (!input) {
       input = document.documentElement;
@@ -139,32 +170,25 @@ class QuerySelectorAction extends BaseAction {
     if (Array.isArray(input)) {
       return input.map((node) => this.execute(node));
     }
-    throw new Error(`invalid input in query selector (${selector})`);
+    super.log_invalid_type(input);
+  }
+}
+
+class QuerySelectorAction extends BaseQuerySelectorAction {
+  constructor(config) {
+    super(config, false);
   }
 }
 
 class QuerySelectorAllAction extends BaseAction {
-  execute(input) {
-    if (!input) {
-      input = document.documentElement;
-    }
-    const { selector } = this.config;
-    if (input instanceof HTMLElement) {
-      return Array.from(input.querySelectorAll(selector));
-    }
-    if (input instanceof NodeList) {
-      return Array.from(input).map((node) => this.execute(node));
-    }
-    if (Array.isArray(input)) {
-      return input.map((node) => this.execute(node));
-    }
-    throw new Error(`invalid input in query selector (all) (${selector})`);
+  constructor(config) {
+    super(config, true);
   }
 }
 
 class RegexpAction extends BaseAction {
   execute(input) {
-    const { pattern } = self.config;
+    const { pattern } = this.config;
     const re = new RegExp(pattern, 'g');
     const matches = (input) => {
       const matches = [];
@@ -187,7 +211,7 @@ class RegexpAction extends BaseAction {
     if (Array.isArray(input)) {
       return input.map(async (e) => matches(e));
     }
-    throw new Error('invalid input in regexp action');
+    super.log_invalid_type(input);
   }
 }
 
@@ -213,12 +237,15 @@ class AttributesAction extends PropAction {
     if (input instanceof HTMLElement) {
       return getAttr(super.execute(input));
     }
-    throw new Error('invalid input in attributes action');
+    super.log_invalid_type(input);
   }
 }
 
 class SplitAction extends BaseAction {
   execute(input) {
+    if (!input) {
+      return input;
+    }
     const { separator } = this.config;
     if (typeof input == 'string') {
       return input.split(separator);
@@ -226,12 +253,15 @@ class SplitAction extends BaseAction {
     if (Array.isArray(input)) {
       return input.map((e) => this.execute(e));
     }
-    throw new Error('invalid input in split action');
+    super.log_invalid_type(input);
   }
 }
 
 class GetAction extends BaseAction {
   execute(input) {
+    if (!input?.get) {
+      return null;
+    }
     const { prop } = this.config;
     if (Array.isArray(input)) {
       return input.map((item) => item[prop]);
@@ -239,7 +269,7 @@ class GetAction extends BaseAction {
     if (typeof input === 'object' && input !== null) {
       return input[prop];
     }
-    throw new Error('invalid input in get action');
+    super.log_invalid_type(input);
   }
 }
 
@@ -248,6 +278,8 @@ class Actions {
     switch (config.action) {
       case 'documentElement':  // https://developer.mozilla.org/en-US/docs/Web/API/Document/documentElement
         return new DocumentElementAction(config);
+      case 'filterSelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/matches
+        return new FilterSelectorAction(config);
       case 'querySelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
         return new QuerySelectorAction(config);
       case 'querySelectorAll':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
@@ -267,7 +299,7 @@ class Actions {
       case 'get':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/get#prop
         return new GetAction(config);
       default:
-        throw new Error(`Unsupported action: ${config.action}`);
+        throw new Error(`unsupported action: ${config.action}`);
     }
   }
 }
@@ -314,7 +346,7 @@ function execStep(step, input) {
   return action.execute(input);
 }
 
-async function execTrigger(triggerResponse) {
+async function execTrigger(rootInput, triggerResponse) {
   const trigger = triggerResponse.trigger;
   const steps = triggerResponse.steps;
   const roots = triggerResponse.roots;
@@ -322,13 +354,14 @@ async function execTrigger(triggerResponse) {
   const stepResults = new Array(steps.length);
 
   console.log('Executing plan for', trigger.id);
+  console.log('..... Input', 0, rootInput)
   console.time("execTrigger");
 
   for (const i in steps) {
     const step = steps[i];
 
     if (roots.has(+i)) { // Root.
-      const result = await execStep(step, null);
+      const result = await execStep(step, rootInput);
       console.log('---> Root', (+i) + 1, step, '=>', result);
       stepResults[i] = result;
     } else if (exchanges.has(+i)) { // Exchange.
@@ -355,9 +388,9 @@ function isEmpty(data) {
   return Object.keys(data).length === 0 && data.constructor === Object;
 }
 
-async function openTrigger() {
+async function openTrigger(input) {
   if (triggerResponse) {
-    execTrigger(triggerResponse);
+    execTrigger(input, triggerResponse);
     return;
   }
   try {
@@ -372,7 +405,6 @@ async function openTrigger() {
       steps: response.plan.steps,
     }
     console.log("Nuggit was injected into this page and may be collecting data (https://github.com/wenooij/nuggit-chrome-extension).");
-    execTrigger(triggerResponse);
     registerObserver();
   } catch (error) {
     if (error.code === 'ECONNREFUSED') {
@@ -387,9 +419,9 @@ async function openTrigger() {
 
 function registerObserver() {
   var cooldown;
-  const callback = () => {
+  const callback = (mutationList) => {
     clearTimeout(cooldown);
-    cooldown = setTimeout(openTrigger, 100);
+    cooldown = setTimeout(() => openTrigger(mutationList.flatMap((e) => Array.from(e.addedNodes))), 100);
   };
   const o = new MutationObserver(callback);
   o.observe(document.body, { childList: true, subtree: true });
@@ -398,6 +430,6 @@ function registerObserver() {
 (async function init() {
   const connected = await testBackendConnection();
   if (connected) {
-    openTrigger();
+    openTrigger(null);
   }
 })();
