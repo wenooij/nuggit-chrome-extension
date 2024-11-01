@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nuggit",
-  "version": "1.8",
+  "version": "1.9",
   "description": "Extracts data from webpages as you browse them",
   "permissions": [
     "storage"

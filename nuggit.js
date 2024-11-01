@@ -114,9 +114,8 @@ class Value {
     if (Value.isString(value) || Value.isNumber(value)) {
       return value;
     }
-    const array = Value.asArray(value);
-    if (array) {
-      return array.map((e) => Value.normalize(e));
+    if (Value.isArray(value)) {
+      return value.map((e) => Value.normalize(e));
     }
     if (Value.isElement(value)) {
       return value.outerHTML;
@@ -131,48 +130,44 @@ class Value {
       const val = value.value.replace(/"/g, '\\"');
       return `${value.name}="${val}"`;
     }
-    if (Value.isNamedNodeMap(value)) {
-      return Array.from(value).map((e) => Value.normalize(e));
+    if (Value.isNamedNodeMap(value) || Value.isNodeList(value)) {
+      return Value.normalize(Array.from(value));
     }
     console.error('unexpected value in normalized will be returned as is', value);
     return value;
   }
 
-  // cast casts the normalized value to the value expected by the given point.
+  // cast casts the normalized value to the value expected by the given scalar.
   //
   // It returns the casted value.
-  static cast(value, point) {
-    const { scalar, repeated } = point;
-    if (repeated) {
-      return castRepeatedValue(value, scalar);
-    }
+  static cast(value, scalar) {
     // The scalar value is batched, cast it pointwise.
-    if (isArray()) {
-      return value.map((e) => castScalarValue(e, scalar));
+    if (Value.isArray(value)) {
+      return value.map((e) => Value.castScalar(e, scalar));
     }
-    return castScalarValue(value, scalar);
+    return Value.castScalar(value, scalar);
   }
 
   static castRepeated(value, scalar) {
     // Repeated array values are cast pointwise using map.
-    if (isArray()) {
-      return value.map((e) => castValue(e, scalar));
+    if (Value.isArray(value)) {
+      return value.map((e) => Value.cast(e, scalar));
     }
     // Wrap the casted scalar result in an array.
-    return Array.of(castScalarValue(value));
+    return Array.of(Value.castScalar(value, scalar));
   }
 
   static castScalar(value, scalar) {
-    // Arrays over scalar values are cast pointwise using map.
-    if (Array.isArray(value)) {
-      return value.map((e) => castScalarValue(e, scalar));
-    }
     // Regardless of the scalar type, undefined and null values are converted to null.
     if (value === undefined || value === null) {
       return null;
     }
     switch (scalar) {
-      case undefined, '', 'bytes', 'string':
+      case null:
+      case undefined:
+      case '':
+      case 'bytes':
+      case 'string':
         if (typeof value === 'string') {
           return value;
         }
@@ -187,14 +182,17 @@ class Value {
         // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean#boolean_coercion
         return Boolean(value); // Coerce boolean.
 
-      case 'int', 'int64', 'uint64':
+      case 'int':
+      case 'int64':
+      case 'uint64':
         if (typeof value === 'number') {
           return value;
         }
         // parseInt returns the value, otherwise NaN becomes null.
         return parseInt(value) || null;
 
-      case 'float', 'float64':
+      case 'float':
+      case 'float64':
         if (typeof value === 'number' && isFinite(value)) {
           return value;
         }
@@ -211,35 +209,38 @@ class Value {
   //
   // isZero returns true for arrays when every value is zero and the point is not repeated.
   // If the value is zero, it won't be sent over the exchange.
-  static isZero(value, point) {
-    const { scalar, repeated } = point;
-    if (repeated) {
-      return isEveryZero(scalar);
+  static isZero(value, scalar) {
+    if (Value.isArray(value)) {
+      return value.every((e) => Value.isZeroScalar(e, scalar));
     }
-    if (isArray()) {
-      return value.every((e) => new Value.isScalarZero(e, scalar));
-    }
-    return Value.isScalarZero(scalar);
+    return Value.isZeroScalar(scalar);
   }
 
-  static isEveryZero(value, scalar) {
+  static isZeroArray(value, scalar) {
     return value.every((e) => Value.isZero(e, { scalar, repeated: false }));
   }
 
-  static isScalarZero(value, scalar) {
+  static isZeroScalar(value, scalar) {
     // Null is always zero.
     if (Value.isNull(value)) {
       return true;
     }
     switch (scalar) {
-      case undefined, '', 'bytes', 'string':
+      case undefined:
+      case null:
+      case '':
+      case 'bytes':
+      case 'string':
         return value === '';
 
       case 'bool':
         return value === false;
 
-      case 'int', 'int64', 'uint64':
-      case 'float', 'float64':
+      case 'int':
+      case 'int64':
+      case 'uint64':
+      case 'float':
+      case 'float64':
         return value === 0;
 
       default:
@@ -253,9 +254,9 @@ async function execExchange(trigger, exchanges, steps, stepResults) {
   let results = [];
   for (const i in stepResults) {
     if (exchanges.has(+i)) {
-      const point = { scalar: '', repeated: false }; // TODO: Update this when points are available in plan.
-      const castedValue = castValue(normalizeValue(stepResults[i]), point);
-      if (valueIsZero(castedValue, point)) {
+      const { scalar } = steps[i].action;
+      const castedValue = Value.cast(stepResults[i], scalar);  // stepResults[i] is already normalized.
+      if (Value.isZero(castedValue, scalar)) {
         // Exchange results will be skipped when pipe value is zero.
         continue;
       }
@@ -298,26 +299,18 @@ async function execExchange(trigger, exchanges, steps, stepResults) {
 }
 
 class BaseAction {
-  constructor(config, mapper) {
+  constructor(config) {
     const { action } = config;
     if (!action) {
       throw new Error('invalid action config: \'action\' property is required')
     }
     this.action = action;
     this.config = config;
-    this.mapper = mapper;
   }
 
-  execute() {
-    if (!this.mapper) {
-      throw new Error('invalid execute call on action without a map function provided')
-    }
-    const array = Value.asArray(input);
-    if (!array) {
-      array = [input];
-    }
-    return array.map(this.mapper);
-  }
+  mapper(elem) { return elem; }
+
+  execute(input) { return Value.asArray(input).map(this.mapper); }
 
   log_invalid_type(input) {
     console.error('invalid input type in action', input?.constructor ? input.constructor : input);
@@ -325,19 +318,19 @@ class BaseAction {
 }
 
 class BaseFilterAction extends BaseAction {
-  constructor(config, filter, mapper) {
-    mapper ||= (e) => e;
-    super(config, (e) => filter(e) ? [mapper(e)] : []);
-    this.filter = filter;
+  constructor(config) {
+    super(config);
   }
 
-  execute(input) { return super.execute(input).flat(); }
+  filter(_elem) { return true; }
+
+  execute(input) { return Value.asArray(input).flatMap((e) => this.filter(e) ? [this.mapper(e)] : []); }
 }
 
 // TODO: Create a version of this that doesn't flattens the value batch.
 class PropAction extends BaseAction {
   constructor(config, prop) {
-    super(config, this.getProp);
+    super(config);
     this.prop = prop;
   }
 
@@ -349,18 +342,18 @@ class PropAction extends BaseAction {
     return super.execute(input);
   }
 
-  getProp(input) {
+  mapper = (elem) => {
     // null
     // undefined
-    if (Value.isUndefined(input) || Value.isNull(input)) {
-      return input;
+    if (Value.isUndefined(elem) || Value.isNull(elem)) {
+      return elem;
     }
     // [object]
     // string
-    if (typeof input == 'object' || typeof input == 'string') {
-      return input[this.prop];
+    if (typeof elem == 'object' || typeof elem == 'string') {
+      return elem[this.prop];
     }
-    super.log_invalid_type(input);
+    super.log_invalid_type(elem);
   }
 }
 
@@ -371,12 +364,13 @@ class DocumentElementAction extends BaseAction {
 }
 
 class FilterSelectorAction extends BaseFilterAction {
-  constructor(config, mapper) {
-    super(config, this.filterSelector, mapper);
-    this.selector = config?.selector;
+  constructor(config) {
+    super(config);
+    const { selector } = config;
+    this.selector = selector;
   }
 
-  filterSelector(input) { return input instanceof Element && input.matches(this.selector); }
+  filter = (elem) => { return elem instanceof Element && elem.matches(this.selector); }
 }
 
 class QuerySelectorAction extends BaseAction {
@@ -399,13 +393,13 @@ class QuerySelectorAction extends BaseAction {
     return results.concat(super.execute(input));
   }
 
-  querySelector(input) {
+  mapper = (elem) => {
     // https://developer.mozilla.org/docs/Web/API/Element
-    if (input instanceof Element) {
+    if (elem instanceof Element) {
       if (this.all) {
-        return input.querySelectorAll(this.selector);
+        return elem.querySelectorAll(this.selector);
       }
-      return input.querySelector(this.selector);
+      return elem.querySelector(this.selector);
     }
     return null;
   }
@@ -413,15 +407,15 @@ class QuerySelectorAction extends BaseAction {
 
 class RegexpAction extends BaseAction {
   constructor(config) {
-    super(config, matches);
+    super(config);
     const { pattern } = config;
     this.re = new RegExp(pattern, 'g');
   }
 
-  matches(input) {
+  mapper = (elem) => {
     const matches = [];
     let match;
-    while ((match = this.re.exec(input)) !== null) {
+    while ((match = this.re.exec(elem)) !== null) {
       if (match[1]) { // Use first group if available.
         matches.push(match[1])
       } else { // Use full match.
@@ -434,12 +428,12 @@ class RegexpAction extends BaseAction {
 
 class SplitAction extends BaseAction {
   constructor(config) {
-    super(config, split);
+    super(config);
     const { separator } = config;
     this.separator = separator;
   }
 
-  split(input) { return input.split(this.separator); }
+  mapper = (elem) => { return elem.split(this.separator); }
 }
 
 class Chain {
@@ -511,7 +505,7 @@ async function execTrigger(rootInput, triggerResponse) {
       console.log('---> Root', (+i) + 1, step, '=>', result);
       stepResults[i] = result;
     } else if (exchanges.has(+i)) { // Exchange.
-      const input = normalizeValue(stepResults[step.input - 1]);
+      const input = Value.normalize(stepResults[step.input - 1]);
       console.log('<--- Exchange', (+i) + 1, step, '=>', input);
       stepResults[i] = input;
     } else { // Regular step.
