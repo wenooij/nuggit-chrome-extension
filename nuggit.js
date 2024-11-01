@@ -44,275 +44,231 @@ async function fetchTrigger() {
   return result;
 }
 
-function convertResult(action, result) {
-  if (result === undefined) {
-    return null;
+class Value {
+  static isNull(value) {
+    return value === null;
   }
-  if (Array.isArray(result)) {
-    return result.map((e) => convertResult(action, e));
+
+  static isUndefined(value) {
+    return value === undefined;
   }
-  if (result instanceof NodeList) {
-    return Array.from(result).map((node) => convertResult(action, node));
+
+  static isString(value) {
+    return typeof value === 'string';
   }
-  switch (action.type) {
-    case 'int64':
-    case 'uint64':
-      return parseInt(result, 10);
 
-    case 'float64':
-      return parseFloat(result);
-
-    case 'bytes':
-    case '':
-    case undefined:
-      if (result instanceof Element || result instanceof HTMLElement) {
-        if (result.nodeType == Node.TEXT_NODE) {
-          return result.textContent;
-        } else {
-          return result.outerHTML || String(result);
-        }
-      }
-      if (result instanceof Attr) {
-        return result.value;
-      }
-      if (result instanceof NamedNodeMap) {
-        return Array.from(result).map((e) => e.value);
-      }
-      if (typeof result === 'string') {
-        return result;
-      }
-      return JSON.stringify(result);
-
-    default: // Unsupported types default here.
-      throw new Error(`Unsupported action type: ${action.type}`);
+  static isNumber(value) {
+    return typeof value === 'number';
   }
-}
 
-class BaseAction {
-  constructor(config) {
-    if (!config || typeof config !== 'object' || !config.action) {
-      throw new Error('invalid action config: \'action\' property is required')
+  static isArray(value) {
+    return Array.isArray(value);
+  }
+
+  static isNodeList(value) {
+    return value instanceof NodeList;
+  }
+
+  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement
+  static isHTMLElement(value) {
+    return value instanceof Element;
+  }
+
+  // https://developer.mozilla.org/en-US/docs/Web/API/Element
+  static isElement(value) {
+    return value instanceof Element;
+  }
+
+  // https://developer.mozilla.org/en-US/docs/Web/API/Node
+  static isNode(value) {
+    return value instanceof Node;
+  }
+
+  // https://developer.mozilla.org/en-US/docs/Web/API/Attr
+  static isAttr(value) {
+    return value instanceof Attr;
+  }
+
+  // https://developer.mozilla.org/en-US/docs/Web/API/NamedNodeMap
+  static isNamedNodeMap(value) {
+    return value instanceof NamedNodeMap;
+  }
+
+  static asArray(value) {
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array
+    if (Value.isArray(value)) {
+      return value;
     }
-    this.config = config;
-  }
-
-  execute() {
-    throw new Error('invalid execute call on base class')
-  }
-
-  log_invalid_type(input) {
-    console.error('invalid input type in action', input?.constructor ? input.constructor : input);
-  }
-}
-
-class PropAction extends BaseAction {
-  constructor(config, prop) {
-    super(config);
-    this.prop = prop;
-  }
-
-  execute(input) {
-    if (Array.isArray(input)) {
-      return input.map((item) => item[this.prop]);
+    // https://developer.mozilla.org/en-US/docs/Web/API/NodeList
+    if (Value.isNodeList(value)) {
+      return Array.from(value);
     }
-    if (typeof input === 'object' && input !== null) {
-      return input[this.prop];
-    }
-    super.log_invalid_type(input);
+    return Array.of(value);
   }
-}
 
-class DocumentElementAction extends BaseAction {
-  execute() {
-    return document.documentElement;
-  }
-}
-
-class FilterSelectorAction extends BaseAction {
-  execute(input) {
-    if (!input) {
-      return [];
-    }
-    const { selector } = this.config;
-    if (input instanceof HTMLElement) {
-      if (input.matches(selector)) {
-        return input;
-      }
+  // normalize the value by converting applicable parts to arrays.
+  static normalize(value) {
+    if (Value.isNull(value) || Value.isUndefined(value)) {
       return null;
     }
-    if (input instanceof NodeList) {
-      return this.execute(Array.from(input));
+    if (Value.isString(value) || Value.isNumber(value)) {
+      return value;
     }
-    if (Array.isArray(input)) {
-      return input.filter((e) => this.execute(e) != null)
+    const array = Value.asArray(value);
+    if (array) {
+      return array.map((e) => Value.normalize(e));
     }
-    super.log_invalid_type(input);
-  }
-}
-
-class BaseQuerySelectorAction extends BaseAction {
-  constructor(config, all) {
-    super(config);
-    this.all = all;
-  }
-
-  execute(input) {
-    if (!input) {
-      input = document.documentElement;
+    if (Value.isElement(value)) {
+      return value.outerHTML;
     }
-    const { selector } = this.config;
-    if (input instanceof HTMLElement) {
-      return input.querySelector(selector);
+    if (Value.isNode(value)) {
+      // TODO: Do we have something more appropriate to return?
+      // See https://developer.mozilla.org/en-US/docs/Web/API/Node/textContent#differences_from_innertext
+      return value.textContent;
     }
-    if (input instanceof NodeList) {
-      return Array.from(input).map((node) => this.execute(node));
+    if (Value.isAttr(value)) {
+      // Escape double-quotes.
+      const val = value.value.replace(/"/g, '\\"');
+      return `${value.name}="${val}"`;
     }
-    if (Array.isArray(input)) {
-      return input.map((node) => this.execute(node));
+    if (Value.isNamedNodeMap(value)) {
+      return Array.from(value).map((e) => Value.normalize(e));
     }
-    super.log_invalid_type(input);
-  }
-}
-
-class QuerySelectorAction extends BaseQuerySelectorAction {
-  constructor(config) {
-    super(config, false);
-  }
-}
-
-class QuerySelectorAllAction extends BaseAction {
-  constructor(config) {
-    super(config, true);
-  }
-}
-
-class RegexpAction extends BaseAction {
-  execute(input) {
-    const { pattern } = this.config;
-    const re = new RegExp(pattern, 'g');
-    const matches = (input) => {
-      const matches = [];
-      let match;
-      while ((match = re.exec(input)) !== null) {
-        if (match[1]) { // Use first group if available.
-          matches.push(match[1])
-        } else { // Use full match.
-          matches.push(match[0]);
-        }
-      }
-      return matches;
-    };
-    if (input instanceof HTMLElement) {
-      return this.execute(re, input.outerHTML);
-    }
-    if (typeof input === 'string') {
-      return matches(input);
-    }
-    if (Array.isArray(input)) {
-      return input.map(async (e) => matches(e));
-    }
-    super.log_invalid_type(input);
-  }
-}
-
-class AttributesAction extends PropAction {
-  constructor(config) {
-    super(config, 'attributes');
+    console.error('unexpected value in normalized will be returned as is', value);
+    return value;
   }
 
-  execute(input) {
-    const { name } = this.config;
-    const getAttr = (attrs) => {
-      if (name) {
-        return attrs[name];
-      }
-      return attrs;
+  // cast casts the normalized value to the value expected by the given point.
+  //
+  // It returns the casted value.
+  static cast(value, point) {
+    const { scalar, repeated } = point;
+    if (repeated) {
+      return castRepeatedValue(value, scalar);
     }
-    if (Array.isArray(input)) {
-      return input.map((e) => getAttr(super.execute(e)));
+    // The scalar value is batched, cast it pointwise.
+    if (isArray()) {
+      return value.map((e) => castScalarValue(e, scalar));
     }
-    if (input instanceof NodeList) {
-      return Array.from(super.execute(input)).map((e) => getAttr(super.execute(e)));
-    }
-    if (input instanceof HTMLElement) {
-      return getAttr(super.execute(input));
-    }
-    super.log_invalid_type(input);
+    return castScalarValue(value, scalar);
   }
-}
 
-class SplitAction extends BaseAction {
-  execute(input) {
-    if (!input) {
-      return input;
+  static castRepeated(value, scalar) {
+    // Repeated array values are cast pointwise using map.
+    if (isArray()) {
+      return value.map((e) => castValue(e, scalar));
     }
-    const { separator } = this.config;
-    if (typeof input == 'string') {
-      return input.split(separator);
-    }
-    if (Array.isArray(input)) {
-      return input.map((e) => this.execute(e));
-    }
-    super.log_invalid_type(input);
+    // Wrap the casted scalar result in an array.
+    return Array.of(castScalarValue(value));
   }
-}
 
-class GetAction extends BaseAction {
-  execute(input) {
-    if (!input?.get) {
+  static castScalar(value, scalar) {
+    // Arrays over scalar values are cast pointwise using map.
+    if (Array.isArray(value)) {
+      return value.map((e) => castScalarValue(e, scalar));
+    }
+    // Regardless of the scalar type, undefined and null values are converted to null.
+    if (value === undefined || value === null) {
       return null;
     }
-    const { prop } = this.config;
-    if (Array.isArray(input)) {
-      return input.map((item) => item[prop]);
-    }
-    if (typeof input === 'object' && input !== null) {
-      return input[prop];
-    }
-    super.log_invalid_type(input);
-  }
-}
+    switch (scalar) {
+      case undefined, '', 'bytes', 'string':
+        if (typeof value === 'string') {
+          return value;
+        }
+        // Casting with String yields "[object Object]" which is pointless.
+        // stringifying unknown types is much more useful even if its "{}".
+        return JSON.stringify(value);
 
-class Actions {
-  static create(config) {
-    switch (config.action) {
-      case 'documentElement':  // https://developer.mozilla.org/en-US/docs/Web/API/Document/documentElement
-        return new DocumentElementAction(config);
-      case 'filterSelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/matches
-        return new FilterSelectorAction(config);
-      case 'querySelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
-        return new QuerySelectorAction(config);
-      case 'querySelectorAll':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
-        return new QuerySelectorAllAction(config);
-      case 'innerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML
-        return new PropAction(config, 'innerHTML');
-      case 'outerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/outerHTML
-        return new PropAction(config, 'outerHTML');
-      case 'innerText':  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/innerText
-        return new PropAction(config, 'innerText');
-      case 'regexp':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp
-        return new RegexpAction(config);
-      case 'attributes':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/attributes
-        return new AttributesAction(config);
-      case 'split':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/split
-        return new SplitAction(config);
-      case 'get':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/get#prop
-        return new GetAction(config);
+      case 'bool':
+        if (typeof value === 'boolean') {
+          return value;
+        }
+        // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean#boolean_coercion
+        return Boolean(value); // Coerce boolean.
+
+      case 'int', 'int64', 'uint64':
+        if (typeof value === 'number') {
+          return value;
+        }
+        // parseInt returns the value, otherwise NaN becomes null.
+        return parseInt(value) || null;
+
+      case 'float', 'float64':
+        if (typeof value === 'number' && isFinite(value)) {
+          return value;
+        }
+        // parseFloat returns the value, otherwise NaN becomes null.
+        return parseFloat(value) || null;
+
       default:
-        throw new Error(`unsupported action: ${config.action}`);
+        console.error('unexpected scalar type will be JSON stringified', scalar, value);
+        return JSON.stringify(value);
+    }
+  }
+
+  // isZero returns whether normalized, casted result value is the zero value with respect to the given point.
+  //
+  // isZero returns true for arrays when every value is zero and the point is not repeated.
+  // If the value is zero, it won't be sent over the exchange.
+  static isZero(value, point) {
+    const { scalar, repeated } = point;
+    if (repeated) {
+      return isEveryZero(scalar);
+    }
+    if (isArray()) {
+      return value.every((e) => new Value.isScalarZero(e, scalar));
+    }
+    return Value.isScalarZero(scalar);
+  }
+
+  static isEveryZero(value, scalar) {
+    return value.every((e) => Value.isZero(e, { scalar, repeated: false }));
+  }
+
+  static isScalarZero(value, scalar) {
+    // Null is always zero.
+    if (Value.isNull(value)) {
+      return true;
+    }
+    switch (scalar) {
+      case undefined, '', 'bytes', 'string':
+        return value === '';
+
+      case 'bool':
+        return value === false;
+
+      case 'int', 'int64', 'uint64':
+      case 'float', 'float64':
+        return value === 0;
+
+      default:
+        console.error('unexpected scalar type will be assumed nonzero', scalar, value);
+        return false;
     }
   }
 }
 
 async function execExchange(trigger, exchanges, steps, stepResults) {
-  var results = [];
+  let results = [];
   for (const i in stepResults) {
     if (exchanges.has(+i)) {
+      const point = { scalar: '', repeated: false }; // TODO: Update this when points are available in plan.
+      const castedValue = castValue(normalizeValue(stepResults[i]), point);
+      if (valueIsZero(castedValue, point)) {
+        // Exchange results will be skipped when pipe value is zero.
+        continue;
+      }
       results.push({
         pipe: `${steps[i].action.name}@${steps[i].action.digest}`,
-        result: stepResults[i],
+        result: castedValue,
       });
     }
+  }
+
+  if (results.length == 0) {
+    // Exchange will be skipped when all results are zero.
+    return;
   }
 
   try {
@@ -341,6 +297,196 @@ async function execExchange(trigger, exchanges, steps, stepResults) {
   }
 }
 
+class BaseAction {
+  constructor(config, mapper) {
+    const { action } = config;
+    if (!action) {
+      throw new Error('invalid action config: \'action\' property is required')
+    }
+    this.action = action;
+    this.config = config;
+    this.mapper = mapper;
+  }
+
+  execute() {
+    if (!this.mapper) {
+      throw new Error('invalid execute call on action without a map function provided')
+    }
+    const array = Value.asArray(input);
+    if (!array) {
+      array = [input];
+    }
+    return array.map(this.mapper);
+  }
+
+  log_invalid_type(input) {
+    console.error('invalid input type in action', input?.constructor ? input.constructor : input);
+  }
+}
+
+class BaseFilterAction extends BaseAction {
+  constructor(config, filter, mapper) {
+    mapper ||= (e) => e;
+    super(config, (e) => filter(e) ? [mapper(e)] : []);
+    this.filter = filter;
+  }
+
+  execute(input) { return super.execute(input).flat(); }
+}
+
+// TODO: Create a version of this that doesn't flattens the value batch.
+class PropAction extends BaseAction {
+  constructor(config, prop) {
+    super(config, this.getProp);
+    this.prop = prop;
+  }
+
+  execute(input) {
+    // When prop is not set, return the input unmodified.
+    if (!this.prop) {
+      return e;
+    }
+    return super.execute(input);
+  }
+
+  getProp(input) {
+    // null
+    // undefined
+    if (Value.isUndefined(input) || Value.isNull(input)) {
+      return input;
+    }
+    // [object]
+    // string
+    if (typeof input == 'object' || typeof input == 'string') {
+      return input[this.prop];
+    }
+    super.log_invalid_type(input);
+  }
+}
+
+class DocumentElementAction extends BaseAction {
+  execute() {
+    return document.documentElement;
+  }
+}
+
+class FilterSelectorAction extends BaseFilterAction {
+  constructor(config, mapper) {
+    super(config, this.filterSelector, mapper);
+    this.selector = config?.selector;
+  }
+
+  filterSelector(input) { return input instanceof Element && input.matches(this.selector); }
+}
+
+class QuerySelectorAction extends BaseAction {
+  constructor(config) {
+    super(config);
+    const { selector, all, self } = config;
+    this.selector = selector;
+    this.all = all;
+    this.self = self;
+    if (this.self) {
+      this.selfFilter = new FilterSelectorAction(config);
+    }
+  }
+
+  execute(input) {
+    let results = [];
+    if (this.self) {
+      results = this.selfFilter.execute(input);
+    }
+    return results.concat(super.execute(input));
+  }
+
+  querySelector(input) {
+    // https://developer.mozilla.org/docs/Web/API/Element
+    if (input instanceof Element) {
+      if (this.all) {
+        return input.querySelectorAll(this.selector);
+      }
+      return input.querySelector(this.selector);
+    }
+    return null;
+  }
+}
+
+class RegexpAction extends BaseAction {
+  constructor(config) {
+    super(config, matches);
+    const { pattern } = config;
+    this.re = new RegExp(pattern, 'g');
+  }
+
+  matches(input) {
+    const matches = [];
+    let match;
+    while ((match = this.re.exec(input)) !== null) {
+      if (match[1]) { // Use first group if available.
+        matches.push(match[1])
+      } else { // Use full match.
+        matches.push(match[0]);
+      }
+    }
+    return matches;
+  }
+}
+
+class SplitAction extends BaseAction {
+  constructor(config) {
+    super(config, split);
+    const { separator } = config;
+    this.separator = separator;
+  }
+
+  split(input) { return input.split(this.separator); }
+}
+
+class Chain {
+  constructor(...actions) {
+    this.actions = actions;
+  }
+
+  execute(input) {
+    let result = input;
+    for (const action of this.actions) {
+      result = action.execute(result);
+    }
+    return result;
+  }
+}
+
+class Actions {
+  static create(config) {
+    switch (config.action) {
+      case 'documentElement':  // https://developer.mozilla.org/en-US/docs/Web/API/Document/documentElement
+        return new DocumentElementAction(config);
+      case 'filterSelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/matches
+        return new FilterSelectorAction(config);
+      case 'querySelector':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
+        return new QuerySelectorAction(config);
+      case 'querySelectorAll':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
+        return new QuerySelectorAction(config);
+      case 'innerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML
+        return new PropAction(config, 'innerHTML');
+      case 'outerHTML':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/outerHTML
+        return new PropAction(config, 'outerHTML');
+      case 'innerText':  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/innerText
+        return new PropAction(config, 'innerText');
+      case 'regexp':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp
+        return new RegexpAction(config);
+      case 'attributes':  // https://developer.mozilla.org/en-US/docs/Web/API/Element/attributes
+        return new Chain(new PropAction(config, 'attributes'), new PropAction(config, config?.name));
+      case 'split':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/split
+        return new SplitAction(config);
+      case 'get':  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/get#prop
+        return new PropAction(config, config?.prop);
+      default:
+        throw new Error(`unsupported action: ${config.action}`);
+    }
+  }
+}
+
 function execStep(step, input) {
   const action = Actions.create(step.action);
   return action.execute(input);
@@ -365,8 +511,7 @@ async function execTrigger(rootInput, triggerResponse) {
       console.log('---> Root', (+i) + 1, step, '=>', result);
       stepResults[i] = result;
     } else if (exchanges.has(+i)) { // Exchange.
-      // TODO: Use Point here when available.
-      const input = convertResult({}, stepResults[step.input - 1]);
+      const input = normalizeValue(stepResults[step.input - 1]);
       console.log('<--- Exchange', (+i) + 1, step, '=>', input);
       stepResults[i] = input;
     } else { // Regular step.
