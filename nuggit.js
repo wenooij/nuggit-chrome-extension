@@ -179,6 +179,10 @@ class Value {
         if (typeof value === 'boolean') {
           return value;
         }
+        if (Value.isArray(value)) {
+          // Use an truth assignment that makes empty arrays yield false.
+          return Boolean(value.length);
+        }
         // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean#boolean_coercion
         return Boolean(value); // Coerce boolean.
 
@@ -211,6 +215,7 @@ class Value {
   // If the value is zero, it won't be sent over the exchange.
   static isZero(value, scalar) {
     if (Value.isArray(value)) {
+      // This returns true for empty arrays.
       return value.every((e) => Value.isZeroScalar(e, scalar));
     }
     return Value.isZeroScalar(scalar);
@@ -222,7 +227,7 @@ class Value {
 
   static isZeroScalar(value, scalar) {
     // Null is always zero.
-    if (Value.isNull(value)) {
+    if (Value.isNull(value) || Value.isUndefined(value)) {
       return true;
     }
     switch (scalar) {
@@ -250,26 +255,20 @@ class Value {
   }
 }
 
-async function execExchange(trigger, exchanges, steps, stepResults) {
-  let results = [];
-  for (const i in stepResults) {
-    if (exchanges.has(+i)) {
-      const { scalar } = steps[i].action;
-      const castedValue = Value.cast(stepResults[i], scalar);  // stepResults[i] is already normalized.
-      if (Value.isZero(castedValue, scalar)) {
-        // Exchange results will be skipped when pipe value is zero.
-        continue;
-      }
-      results.push({
-        pipe: `${steps[i].action.name}@${steps[i].action.digest}`,
-        result: castedValue,
-      });
-    }
-  }
-
-  if (results.length == 0) {
+async function execExchange(trigger, exchanges) {
+  if (exchanges.length === 0) {
     // Exchange will be skipped when all results are zero.
     return;
+  }
+
+  let results = [];
+  for (const exchange of exchanges) {
+    const { action, scalar, result } = exchange;
+    results.push({
+      pipe: `${action.name}@${action.digest}`,
+      scalar: scalar,
+      result: result, // Result is already normalized and casted.
+    });
   }
 
   try {
@@ -497,6 +496,8 @@ async function execTrigger(rootInput, triggerResponse) {
   console.log('..... Input', 0, rootInput)
   console.time("execTrigger");
 
+  const contentfulExchanges = [];
+
   for (const i in steps) {
     const step = steps[i];
 
@@ -505,9 +506,19 @@ async function execTrigger(rootInput, triggerResponse) {
       console.log('---> Root', (+i) + 1, step, '=>', result);
       stepResults[i] = result;
     } else if (exchanges.has(+i)) { // Exchange.
-      const input = Value.normalize(stepResults[step.input - 1]);
-      console.log('<--- Exchange', (+i) + 1, step, '=>', input);
-      stepResults[i] = input;
+      const { scalar } = step.action;
+      const result = Value.cast(Value.normalize(stepResults[step.input - 1]), scalar);
+      if (Value.isZero(result)) {
+        console.log('XXXX Exchange', (+i) + 1, 'skipped (no results)')
+        continue;
+      }
+      console.log('<--- Exchange', (+i) + 1, step, '=>', result);
+      stepResults[i] = result;
+      contentfulExchanges.push({
+        action: steps[i].action,
+        scalar: scalar,
+        result: result,
+      });
     } else { // Regular step.
       const input = stepResults[step.input - 1];
       const result = await execStep(step, input);
@@ -518,7 +529,7 @@ async function execTrigger(rootInput, triggerResponse) {
 
   console.timeEnd("execTrigger");
 
-  execExchange(trigger, exchanges, steps, stepResults);
+  execExchange(trigger, contentfulExchanges);
 }
 
 let triggerResponse;
