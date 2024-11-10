@@ -79,7 +79,7 @@ function filterNode(filter, node) {
     return false;
   }
   // Test Class
-  if (filter.class && !node.classList || !node.classList.contains(filter.class)) {
+  if (filter.class && node.classList && !node.classList.contains(filter.class)) {
     return false;
   }
   // Test Attribute
@@ -95,33 +95,27 @@ function filterNode(filter, node) {
     return false;
   }
   // Passed all filters.
-  // Return true if there is at least one filter.
-  return Object.keys(filter).length > 0;
+  return true;
 }
 
 // transformNode transforms a node by the given action and returns a serializable Element.
 function transformNode(action, node) {
   const out = {};
 
-  if (action.id) { out.id = node.id; }
-  if (action.name) { out.name = node.name; }
-  if (action.nodeType) { out.nodeType = node.nodeType; }
-  if (action.class) { out.class = node.class; }
-  if (action.attributes) {
-    const attrs = {};
-    node.attributes.forEach((attr) => {
-      if (action.attribute_values) {
-        attrs[attr.name] = attr.value;
-      } else {
-        attrs[attr.name] = '';
-      }
-    });
-    out.attributes = attrs;
+  if (action.id && node.id) { out.id = node.id; }
+  if (action.name && node.name) { out.name = node.name; }
+  if (action.nodeType && node.nodeType) { out.nodeType = node.nodeType; }
+  if (action.tagName && node.tagName) { out.tagName = node.tagName; }
+  if (action.classList && node.classList) { out.class = Array.from(node.classList); }
+  if (action.attributes && node.attributes) {
+    const attributeFilter = new Set(action.attributeFilter);
+    out.attributes = Array.from(node.attributes)
+      .flatMap((e) => attributeFilter.size === 0 || attributeFilter.has(e.name) ? [{name: e.name, value: e.value}] : []);
   }
-  if (action.innerText) { out.innerText = node.innerText; }
-  if (action.innerHtml) { out.innerHtml = node.innerHTML; }
-  if (action.outerHtml) { out.outerHtml = node.outerHTML; }
-  if (action.textContent) { out.textContent = node.textContent; }
+  if (action.innerText && node.innerText) { out.innerText = node.innerText; }
+  if (action.innerHTML && node.innerHTML) { out.innerHTML = node.innerHTML; }
+  if (action.outerHTML && node.outerHTML) { out.outerHTML = node.outerHTML; }
+  if (action.textContent && node.textContent) { out.textContent = node.textContent; }
 
   if (node instanceof HTMLCanvasElement) {
     // TODO: Implement this.

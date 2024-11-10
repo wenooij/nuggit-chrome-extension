@@ -27,21 +27,26 @@ chrome.runtime.onConnect.addListener((port) => {
       console.log('Navigated to ', msg.url);
 
       // Post a message with some rules for testing.
-      // For now, it's some rules that scrapes the 
-      // inner text of job-card-list class elements.
       port.postMessage({
         rules: [
           {
-            filter: {
-              class: 'job-card-list'
-            },
+            // Filtering based on pipe plans is not yet implemented.
+            // We just return the whole page.
+            filter: {},
             action: {
-              innerText: true
+              id: true,
+              name: true,
+              nodeType: true,
+              tagName: true,
+              classList: true,
+              attributes: true,
+              outerHTML: true,
+              textContent: true,
+              // Canvas elements not yet supported.
             },
           }
         ]
       })
-
     } else if (msg.result) {
       console.log('Result message sent to client');
 
